@@ -1,0 +1,817 @@
+<!-- <!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Virtual Tour</title>
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css"/>
+<script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
+
+<script src="scenes.js"></script>
+
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: black;
+    font-family: sans-serif;
+  }
+  
+  #viewer {
+    width: 100%;
+    height: 100%;
+    position: relative;
+  }
+
+  /* REMOVE DEFAULT PANNELLUM ICONS */
+  .pnlm-hotspot-base,
+  .pnlm-hotspot,
+  .pnlm-hotspot span {
+    background: none !important;
+    border: none !important;
+  }
+  .pnlm-hotspot span {
+    display: none !important;
+  }
+  .pnlm-load-box { display: none !important; }
+
+  /* --- GOOGLE MAPS ARROW STYLES --- */
+  .arrow { 
+    width: 60px; height: 60px; 
+    cursor: pointer; 
+    transition: transform 0.2s; 
+    filter: drop-shadow(0px 4px 4px rgba(0,0,0,0.5)); 
+    position: relative;
+  }
+  .arrow:hover { transform: scale(1.2); }
+  
+  .tooltip-text {
+    position: absolute;
+    bottom: 70px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s;
+  }
+  
+  .arrow:hover .tooltip-text { opacity: 1; }
+
+  /* --- ROTATE INSTRUCTION OVERLAY --- */
+  #rotate-overlay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 10;
+    color: white;
+    text-align: center;
+    pointer-events: none; 
+    text-shadow: 0px 2px 5px rgba(0,0,0,0.8);
+    animation: blinkOverlay 1.5s infinite;
+  }
+
+  @keyframes blinkOverlay {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .swipe-icon {
+    width: 60px;
+    height: 60px;
+    fill: white;
+    filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.8));
+    animation: swipeHand 2s infinite ease-in-out;
+    margin-bottom: 10px;
+  }
+
+  @keyframes swipeHand {
+    0%, 100% { transform: translateX(15px) rotate(-5deg); }
+    50% { transform: translateX(-15px) rotate(5deg); }
+  }
+  
+  .overlay-text {
+    font-size: 18px;
+    font-weight: bold;
+    letter-spacing: 1px;
+  }
+
+  /* --- BUTTON STYLES --- */
+  .tour-btn {
+    position: fixed;
+    top: 20px;
+    z-index: 999;
+    padding: 10px 15px;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    cursor: pointer;
+    border-radius: 5px;
+    transition: background 0.3s, border-color 0.3s;
+    font-size: 14px;
+  }
+  .tour-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+
+  .reset-btn {
+    right: 20px;
+  }
+
+  .auto-btn {
+    left: 20px;
+  }
+
+  /* Green styling when auto-tour is active */
+  .auto-btn.active {
+    background: rgba(46, 204, 113, 0.8); 
+    border-color: rgba(46, 204, 113, 1);
+    font-weight: bold;
+  }
+</style>
+</head>
+
+<body>
+
+<div id="viewer">
+  <div id="rotate-overlay">
+    <svg class="swipe-icon" viewBox="0 0 24 24">
+      <path d="M9 11.24V7.5C9 6.12 10.12 5 11.5 5S14 6.12 14 7.5v3.74c1.21-.81 2-2.18 2-3.74C16 5.01 13.99 3 11.5 3S7 5.01 7 7.5c0 1.56.79 2.93 2 3.74zm9.84 4.63l-4.54-2.26c-.17-.07-.35-.11-.54-.11H13v-6c0-.83-.67-1.5-1.5-1.5S10 6.67 10 7.5v10.74l-3.43-.72c-.08-.01-.15-.03-.24-.03-.31 0-.59.13-.79.33l-.79.8 4.94 4.94c.27.27.65.44 1.04.44h6.79c.75 0 1.33-.55 1.44-1.28l.75-5.27c.01-.07.02-.14.02-.2 0-.62-.38-1.16-.91-1.38z"/>
+    </svg>
+    <div class="overlay-text">Drag to explore</div>
+  </div>
+</div>
+
+<button id="autoTourBtn" class="tour-btn auto-btn" onclick="toggleAutoTour()">▶ Start Auto Tour</button>
+<button class="tour-btn reset-btn" onclick="resetTour()">Reset Tour</button>
+
+<script>
+let viewer;
+let lastValidScene = null;
+let currentScene = null;
+
+// Auto Tour Variables
+let isAutoTourMode = false;
+let autoTourTimer = null;
+let lastAutoSceneVisited = null; // Memory to prevent A -> B -> A loops
+const AUTO_TOUR_DELAY = 8000; // Wait 8 seconds per room (gives time to rotate)
+
+function initTour() {
+  const formattedScenes = {};
+
+  for (const [sceneId, sceneData] of Object.entries(SCENES)) {
+    const validArrows = sceneData.arrows ? sceneData.arrows.filter(a => a.next !== null) : [];
+
+    formattedScenes[sceneId] = {
+      type: "equirectangular",
+      panorama: sceneData.pano,
+      hotSpots: validArrows.map((a, i) => ({
+        id: sceneId + "_hs_" + i,
+        pitch: a.pitch,
+        yaw: a.yaw,
+        type: "info",
+        createTooltipFunc: (div) => makeArrow(div, a.next, a.pitch, a.yaw, a.label)
+      }))
+    };
+  }
+
+  const savedLastScene = localStorage.getItem('lastScene') || START_SCENE;
+  const savedYaw = parseFloat(localStorage.getItem('yaw')) || 0;
+  const savedPitch = parseFloat(localStorage.getItem('pitch')) || 0;
+
+  viewer = pannellum.viewer("viewer", {
+    default: {
+      firstScene: savedLastScene,
+      yaw: savedYaw,
+      pitch: savedPitch,
+      autoLoad: true,
+      sceneFadeDuration: 500 
+    },
+    scenes: formattedScenes
+  });
+
+  viewer.on('scenechange', (sceneId) => {
+    if (currentScene !== sceneId) {
+      lastValidScene = currentScene;
+      currentScene = sceneId;
+    }
+    localStorage.setItem('lastScene', sceneId);
+  });
+
+  viewer.on('error', () => {
+    if (lastValidScene) {
+      viewer.loadScene(lastValidScene);
+    }
+  });
+  
+  // Whenever a new scene FINISHES loading, restart the auto-tour rotation and timer
+  viewer.on('load', () => {
+    if (isAutoTourMode) {
+      startAutoTourTimer();
+    }
+  });
+
+  setInterval(() => {
+    if (!viewer) return;
+    localStorage.setItem('yaw', viewer.getYaw());
+    localStorage.setItem('pitch', viewer.getPitch());
+  }, 500);
+}
+
+// --- AUTO TOUR LOGIC ---
+function toggleAutoTour() {
+  isAutoTourMode = !isAutoTourMode;
+  const btn = document.getElementById("autoTourBtn");
+  
+  if (isAutoTourMode) {
+    btn.innerHTML = "⏸ Stop Auto Tour";
+    btn.classList.add("active");
+    lastAutoSceneVisited = null; // Clear history on fresh start
+    startAutoTourTimer();
+  } else {
+    btn.innerHTML = "▶ Start Auto Tour";
+    btn.classList.remove("active");
+    clearTimeout(autoTourTimer);
+    viewer.stopAutoRotate();
+  }
+}
+
+function startAutoTourTimer() {
+  clearTimeout(autoTourTimer);
+  if (!isAutoTourMode) return;
+
+  // Slowly rotate the camera to the left at speed "-2"
+  viewer.startAutoRotate(-2);
+
+  autoTourTimer = setTimeout(() => {
+    moveToNextRandomScene();
+  }, AUTO_TOUR_DELAY);
+}
+
+function moveToNextRandomScene() {
+  if (!isAutoTourMode) return;
+  
+  viewer.stopAutoRotate(); // Pause rotation before we lock onto the arrow
+  
+  const currentSceneId = viewer.getScene();
+  const sceneData = SCENES[currentSceneId];
+  
+  if (sceneData && sceneData.arrows && sceneData.arrows.length > 0) {
+    
+    // 1. Get valid internal arrows (Ignore external websites/html pages)
+    const validArrows = sceneData.arrows.filter(a => 
+      a.next && !a.next.endsWith(".html") && !a.next.startsWith("http")
+    );
+    
+    if (validArrows.length > 0) {
+      
+      // 2. Prevent Ping-Ponging! Filter out the room we JUST came from.
+      const forwardArrows = validArrows.filter(a => a.next !== lastAutoSceneVisited);
+      
+      // If forwardArrows is empty, it means we are in a dead end, so we are forced to go back.
+      // Otherwise, we randomly pick from the forward-moving arrows.
+      const choices = forwardArrows.length > 0 ? forwardArrows : validArrows;
+      
+      // 3. Pick randomly from the available choices
+      const randomArrow = choices[Math.floor(Math.random() * choices.length)];
+      
+      // 4. Record the room we are leaving right now into our memory
+      lastAutoSceneVisited = currentSceneId;
+      
+      // 5. Run the Google Maps smooth transition automatically!
+      viewer.lookAt(randomArrow.pitch, randomArrow.yaw, 50, 600);
+      
+      setTimeout(() => {
+        viewer.loadScene(randomArrow.next);
+      }, 600);
+      
+      return; // Exit here so it doesn't hit the auto-turn-off logic below
+    }
+  }
+  
+  // If we reach here, there were no valid arrows at all. Turn Auto Tour off gracefully.
+  toggleAutoTour(); 
+}
+
+// --- ARROW & SMOOTH TRANSITION FUNCTION (MANUAL CLICK) ---
+function makeArrow(div, nextScenePath, targetPitch, targetYaw, targetLabel) {
+  const arrow = document.createElement("div");
+  arrow.className = "arrow";
+
+  arrow.innerHTML = `
+    <svg viewBox="0 0 24 24" width="60">
+      <path d="M12 2 L22 20 H2 Z" fill="white"/>
+    </svg>
+  `;
+
+  const tooltip = document.createElement("div");
+  tooltip.className = "tooltip-text";
+  
+  let displayLabel = targetLabel || nextScenePath;
+  if (!targetLabel && displayLabel.includes("/")) {
+      displayLabel = displayLabel.split('/').pop().replace('.jpg', '').replace('.html', '');
+  }
+  tooltip.innerText = displayLabel; 
+
+  arrow.appendChild(tooltip);
+
+  arrow.onclick = (e) => {
+    e.stopPropagation();
+    
+    // Optional: Stop auto-tour if the user manually clicks an arrow
+    // if (isAutoTourMode) toggleAutoTour();
+
+    if (nextScenePath.endsWith(".html") || nextScenePath.startsWith("http")) {
+      window.location.href = nextScenePath;
+    } else {
+      viewer.lookAt(targetPitch, targetYaw, 50, 600);
+
+      setTimeout(() => {
+        viewer.loadScene(nextScenePath);
+        
+        if (Math.random() < 0.3 && !isAutoTourMode) {
+          showRotateInstruction();
+        }
+      }, 600);
+    }
+  };
+
+  div.appendChild(arrow);
+}
+
+// --- ROTATE INSTRUCTION LOGIC ---
+const overlay = document.getElementById("rotate-overlay");
+const viewerDiv = document.getElementById("viewer");
+
+function showRotateInstruction() {
+  overlay.style.display = "block";
+}
+
+function hideRotateInstruction() {
+  if (overlay.style.display !== "none") {
+    overlay.style.display = "none";
+  }
+}
+
+viewerDiv.addEventListener("mousedown", () => {
+  hideRotateInstruction();
+  // If user drags the mouse, Pannellum stops auto-rotation by default.
+  // This clears the timer so it doesn't suddenly jump rooms while they are dragging.
+  if (isAutoTourMode) { clearTimeout(autoTourTimer); }
+});
+viewerDiv.addEventListener("touchstart", hideRotateInstruction);
+window.addEventListener("keydown", hideRotateInstruction);
+
+// Restart the auto tour timer when the user finishes dragging the mouse
+viewerDiv.addEventListener("mouseup", () => {
+  if (isAutoTourMode) { startAutoTourTimer(); }
+});
+
+function resetTour() {
+  localStorage.clear();
+  location.reload();
+}
+
+window.onload = initTour;
+
+</script>
+</body>
+</html> -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Virtual Tour</title>
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css"/>
+<script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
+
+<script src="scenes.js"></script>
+
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: black;
+    font-family: sans-serif;
+  }
+  
+  #viewer {
+    width: 100%;
+    height: 100%;
+    position: relative;
+  }
+
+  /* REMOVE DEFAULT PANNELLUM ICONS */
+  .pnlm-hotspot-base,
+  .pnlm-hotspot,
+  .pnlm-hotspot span {
+    background: none !important;
+    border: none !important;
+  }
+  .pnlm-hotspot span {
+    display: none !important;
+  }
+  .pnlm-load-box { display: none !important; }
+
+  /* --- GOOGLE MAPS ARROW STYLES --- */
+  .arrow { 
+    width: 60px; height: 60px; 
+    cursor: pointer; 
+    transition: transform 0.2s; 
+    filter: drop-shadow(0px 4px 4px rgba(0,0,0,0.5)); 
+    position: relative;
+  }
+  .arrow:hover { transform: scale(1.2); }
+  
+  .tooltip-text {
+    position: absolute;
+    bottom: 70px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s;
+  }
+  
+  .arrow:hover .tooltip-text { opacity: 1; }
+
+  /* --- ROTATE INSTRUCTION OVERLAY --- */
+  #rotate-overlay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 10;
+    color: white;
+    text-align: center;
+    pointer-events: none; 
+    text-shadow: 0px 2px 5px rgba(0,0,0,0.8);
+    animation: blinkOverlay 1.5s infinite;
+  }
+
+  @keyframes blinkOverlay {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .swipe-icon {
+    width: 60px;
+    height: 60px;
+    fill: white;
+    filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.8));
+    animation: swipeHand 2s infinite ease-in-out;
+    margin-bottom: 10px;
+  }
+
+  @keyframes swipeHand {
+    0%, 100% { transform: translateX(15px) rotate(-5deg); }
+    50% { transform: translateX(-15px) rotate(5deg); }
+  }
+  
+  .overlay-text {
+    font-size: 18px;
+    font-weight: bold;
+    letter-spacing: 1px;
+  }
+
+  /* --- BUTTON STYLES --- */
+  .tour-btn {
+    position: fixed;
+    top: 20px;
+    z-index: 999;
+    padding: 10px 15px;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    cursor: pointer;
+    border-radius: 5px;
+    transition: background 0.3s, border-color 0.3s;
+    font-size: 14px;
+  }
+  .tour-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+
+  .reset-btn {
+    right: 20px;
+  }
+
+  .auto-btn {
+    left: 20px;
+  }
+
+  /* Green styling when auto-tour is active */
+  .auto-btn.active {
+    background: rgba(46, 204, 113, 0.8); 
+    border-color: rgba(46, 204, 113, 1);
+    font-weight: bold;
+  }
+</style>
+</head>
+
+<body>
+
+<div id="viewer">
+  <div id="rotate-overlay">
+    <svg class="swipe-icon" viewBox="0 0 24 24">
+      <path d="M9 11.24V7.5C9 6.12 10.12 5 11.5 5S14 6.12 14 7.5v3.74c1.21-.81 2-2.18 2-3.74C16 5.01 13.99 3 11.5 3S7 5.01 7 7.5c0 1.56.79 2.93 2 3.74zm9.84 4.63l-4.54-2.26c-.17-.07-.35-.11-.54-.11H13v-6c0-.83-.67-1.5-1.5-1.5S10 6.67 10 7.5v10.74l-3.43-.72c-.08-.01-.15-.03-.24-.03-.31 0-.59.13-.79.33l-.79.8 4.94 4.94c.27.27.65.44 1.04.44h6.79c.75 0 1.33-.55 1.44-1.28l.75-5.27c.01-.07.02-.14.02-.2 0-.62-.38-1.16-.91-1.38z"/>
+    </svg>
+    <div class="overlay-text">Drag to explore</div>
+  </div>
+</div>
+
+<button id="autoTourBtn" class="tour-btn auto-btn" onclick="toggleAutoTour()">▶ Start Auto Tour</button>
+<button class="tour-btn reset-btn" onclick="resetTour()">Reset Tour</button>
+
+<script>
+let viewer;
+let lastValidScene = null;
+let currentScene = null;
+
+// Auto Tour Variables
+let isAutoTourMode = false;
+let autoTourTimer = null;
+let lastAutoSceneVisited = null; // Memory to prevent A -> B -> A loops
+const AUTO_TOUR_DELAY = 8000; // Wait 8 seconds per room (gives time to rotate)
+
+// --- TEXT-TO-SPEECH FUNCTION ---
+function speakSceneLabel(sceneId) {
+  // Ensure the scene exists in our SCENES object from scenes.js
+  if (!sceneId || !SCENES[sceneId]) return;
+  
+  const labelText = SCENES[sceneId].label;
+  
+  // Only speak if there is a valid label and the browser supports it
+  if (labelText && labelText.trim() !== "" && 'speechSynthesis' in window) {
+    // Cancel any currently playing audio so it doesn't overlap
+    window.speechSynthesis.cancel();
+    
+    // Create the speech request
+    const speech = new SpeechSynthesisUtterance(labelText);
+    
+    // Optional: Tweak voice parameters here if needed
+    speech.rate = 1.0; 
+    speech.pitch = 1.0;
+    speech.volume = 1.0;
+    
+    // Play the audio
+    window.speechSynthesis.speak(speech);
+  }
+}
+
+function initTour() {
+  const formattedScenes = {};
+
+  for (const [sceneId, sceneData] of Object.entries(SCENES)) {
+    const validArrows = sceneData.arrows ? sceneData.arrows.filter(a => a.next !== null) : [];
+
+    formattedScenes[sceneId] = {
+      type: "equirectangular",
+      panorama: sceneData.pano,
+      hotSpots: validArrows.map((a, i) => ({
+        id: sceneId + "_hs_" + i,
+        pitch: a.pitch,
+        yaw: a.yaw,
+        type: "info",
+        createTooltipFunc: (div) => makeArrow(div, a.next, a.pitch, a.yaw, a.label)
+      }))
+    };
+  }
+
+  const savedLastScene = localStorage.getItem('lastScene') || START_SCENE;
+  const savedYaw = parseFloat(localStorage.getItem('yaw')) || 0;
+  const savedPitch = parseFloat(localStorage.getItem('pitch')) || 0;
+
+  viewer = pannellum.viewer("viewer", {
+    default: {
+      firstScene: savedLastScene,
+      yaw: savedYaw,
+      pitch: savedPitch,
+      autoLoad: true,
+      sceneFadeDuration: 500 
+    },
+    scenes: formattedScenes
+  });
+
+  viewer.on('scenechange', (sceneId) => {
+    if (currentScene !== sceneId) {
+      lastValidScene = currentScene;
+      currentScene = sceneId;
+    }
+    localStorage.setItem('lastScene', sceneId);
+  });
+
+  viewer.on('error', () => {
+    if (lastValidScene) {
+      viewer.loadScene(lastValidScene);
+    }
+  });
+  
+  // Whenever a new scene FINISHES loading, trigger Auto-Tour AND Text-to-Speech
+  viewer.on('load', () => {
+    if (isAutoTourMode) {
+      startAutoTourTimer();
+    }
+    
+    // Trigger Text-to-Speech when entering a room
+    // Note: Browsers block audio until the user interacts with the page (like clicking an arrow).
+    speakSceneLabel(viewer.getScene());
+  });
+
+  setInterval(() => {
+    if (!viewer) return;
+    localStorage.setItem('yaw', viewer.getYaw());
+    localStorage.setItem('pitch', viewer.getPitch());
+  }, 500);
+}
+
+// --- AUTO TOUR LOGIC ---
+function toggleAutoTour() {
+  isAutoTourMode = !isAutoTourMode;
+  const btn = document.getElementById("autoTourBtn");
+  
+  if (isAutoTourMode) {
+    btn.innerHTML = "⏸ Stop Auto Tour";
+    btn.classList.add("active");
+    lastAutoSceneVisited = null; // Clear history on fresh start
+    startAutoTourTimer();
+  } else {
+    btn.innerHTML = "▶ Start Auto Tour";
+    btn.classList.remove("active");
+    clearTimeout(autoTourTimer);
+    viewer.stopAutoRotate();
+  }
+}
+
+function startAutoTourTimer() {
+  clearTimeout(autoTourTimer);
+  if (!isAutoTourMode) return;
+
+  // Slowly rotate the camera to the left at speed "-2"
+  viewer.startAutoRotate(-2);
+
+  autoTourTimer = setTimeout(() => {
+    moveToNextRandomScene();
+  }, AUTO_TOUR_DELAY);
+}
+
+function moveToNextRandomScene() {
+  if (!isAutoTourMode) return;
+  
+  viewer.stopAutoRotate(); // Pause rotation before we lock onto the arrow
+  
+  const currentSceneId = viewer.getScene();
+  const sceneData = SCENES[currentSceneId];
+  
+  if (sceneData && sceneData.arrows && sceneData.arrows.length > 0) {
+    
+    // 1. Get valid internal arrows (Ignore external websites/html pages)
+    const validArrows = sceneData.arrows.filter(a => 
+      a.next && !a.next.endsWith(".html") && !a.next.startsWith("http")
+    );
+    
+    if (validArrows.length > 0) {
+      
+      // 2. Prevent Ping-Ponging! Filter out the room we JUST came from.
+      const forwardArrows = validArrows.filter(a => a.next !== lastAutoSceneVisited);
+      
+      // If forwardArrows is empty, it means we are in a dead end, so we are forced to go back.
+      // Otherwise, we randomly pick from the forward-moving arrows.
+      const choices = forwardArrows.length > 0 ? forwardArrows : validArrows;
+      
+      // 3. Pick randomly from the available choices
+      const randomArrow = choices[Math.floor(Math.random() * choices.length)];
+      
+      // 4. Record the room we are leaving right now into our memory
+      lastAutoSceneVisited = currentSceneId;
+      
+      // 5. Run the Google Maps smooth transition automatically!
+      viewer.lookAt(randomArrow.pitch, randomArrow.yaw, 50, 600);
+      
+      setTimeout(() => {
+        viewer.loadScene(randomArrow.next);
+      }, 600);
+      
+      return; // Exit here so it doesn't hit the auto-turn-off logic below
+    }
+  }
+  
+  // If we reach here, there were no valid arrows at all. Turn Auto Tour off gracefully.
+  toggleAutoTour(); 
+}
+
+// --- ARROW & SMOOTH TRANSITION FUNCTION (MANUAL CLICK) ---
+function makeArrow(div, nextScenePath, targetPitch, targetYaw, targetLabel) {
+  const arrow = document.createElement("div");
+  arrow.className = "arrow";
+
+  arrow.innerHTML = `
+    <svg viewBox="0 0 24 24" width="60">
+      <path d="M12 2 L22 20 H2 Z" fill="white"/>
+    </svg>
+  `;
+
+  const tooltip = document.createElement("div");
+  tooltip.className = "tooltip-text";
+  
+  // --- UPDATED TOOLTIP LOGIC ---
+  let displayLabel = nextScenePath; // default
+
+  // Priority 1: Check if the arrow itself has a specific custom label (e.g., "Go Down to Ground Floor")
+  if (targetLabel && targetLabel.trim() !== "") {
+      displayLabel = targetLabel;
+  } 
+  // Priority 2: Check if the destination scene exists in scenes.js and has a label
+  else if (SCENES[nextScenePath] && SCENES[nextScenePath].label && SCENES[nextScenePath].label.trim() !== "") {
+      displayLabel = SCENES[nextScenePath].label;
+  } 
+  // Priority 3: Fallback to formatting the filename (removes folder paths and extensions)
+  else if (displayLabel.includes("/")) {
+      displayLabel = displayLabel.split('/').pop().replace('.jpg', '').replace('.html', '');
+  }
+
+  tooltip.innerText = displayLabel; 
+  // -----------------------------
+
+  arrow.appendChild(tooltip);
+
+  arrow.onclick = (e) => {
+    e.stopPropagation();
+
+    // 1. Cancel speech immediately when an arrow is clicked to prevent overlap
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+
+    if (nextScenePath.endsWith(".html") || nextScenePath.startsWith("http")) {
+      window.location.href = nextScenePath;
+    } else {
+      viewer.lookAt(targetPitch, targetYaw, 50, 600);
+
+      setTimeout(() => {
+        viewer.loadScene(nextScenePath);
+        
+        if (Math.random() < 0.3 && !isAutoTourMode) {
+          showRotateInstruction();
+        }
+      }, 600);
+    }
+  };
+
+  div.appendChild(arrow);
+}
+
+// --- ROTATE INSTRUCTION LOGIC ---
+const overlay = document.getElementById("rotate-overlay");
+const viewerDiv = document.getElementById("viewer");
+
+function showRotateInstruction() {
+  overlay.style.display = "block";
+}
+
+function hideRotateInstruction() {
+  if (overlay.style.display !== "none") {
+    overlay.style.display = "none";
+  }
+}
+
+viewerDiv.addEventListener("mousedown", () => {
+  hideRotateInstruction();
+  // If user drags the mouse, Pannellum stops auto-rotation by default.
+  // This clears the timer so it doesn't suddenly jump rooms while they are dragging.
+  if (isAutoTourMode) { clearTimeout(autoTourTimer); }
+});
+viewerDiv.addEventListener("touchstart", hideRotateInstruction);
+window.addEventListener("keydown", hideRotateInstruction);
+
+// Restart the auto tour timer when the user finishes dragging the mouse
+viewerDiv.addEventListener("mouseup", () => {
+  if (isAutoTourMode) { startAutoTourTimer(); }
+});
+
+function resetTour() {
+  localStorage.clear();
+  location.reload();
+}
+
+window.onload = initTour;
+
+</script>
+</body>
+</html>
